@@ -7,6 +7,8 @@ try{session=JSON.parse(localStorage.getItem(storageKey)||'null')}catch{}
 const colors=['#547fba','#328d7b','#dc9251'];
 const en=['GETTING TO KNOW YOU','SPEAK CLEARLY','LISTEN & RESPOND'];
 const hints=['分享特質與故事，認識小組成員。','先說結論，再補充理由與例子，最後歸納。','先摘要重點，確認理解，再延伸提問。'];
+const roleLabels={newcomer:'新人',manager:'管理職'};
+const modeLabels={online:'線上',onsite:'現場'};
 const guides=[['第一階段｜認識彼此','14 分鐘。四人組每人 2 分 30 秒，三人組每人同樣時長，餘時自由交流：抽卡思考 15 秒、分享 60 秒、組員提問 30 秒、回答 30 秒、換人 15 秒；最後小組自由交流 4 分鐘。'],['第二階段｜說得清楚','16 分鐘。四人組每人 3 分鐘，三人組每人同樣時長，餘時組內討論：抽卡 15 秒、表達 75 秒、提問 30 秒、補充 30 秒、回饋 30 秒；最後組內討論 4 分鐘。'],['第三階段｜聽懂與回應','15 分鐘。四人組四輪、三人組三輪，每輪各 3 分鐘（三人組每輪由一人觀察）：抽卡 15 秒、分享 60 秒、傾聽者摘要 30 秒、提問 20 秒、回答 25 秒、觀察回饋 30 秒；最後討論 3 分鐘。']];
 let popupHandle;
 function toast(msg){$('toast').textContent=msg;$('toast').style.display='block';clearTimeout(popupHandle);popupHandle=setTimeout(()=>$('toast').style.display='none',3200)}
@@ -19,10 +21,73 @@ socket.on('connect',()=>{$('connection').textContent='● 已連線，即時同�
 socket.on('disconnect',()=>{$('connection').textContent='● 連線中斷，正在重新連線';$('connection').classList.add('offline')});
 socket.on('room:state',data=>{const wasHost=state?.isHost;state=data;if(!state.isHost&&state.myGroup)viewedGroup=state.myGroup;render()});
 socket.on('session:invalid',()=>{state=null;session=null;localStorage.removeItem(storageKey);render();toast('活動登入已失效')});
-$('createForm').addEventListener('submit',e=>{e.preventDefault();action('room:create',{name:$('hostName').value},res=>{session={code:res.code,token:res.token};localStorage.setItem(storageKey,JSON.stringify(session));history.replaceState(null,'',`/?room=${encodeURIComponent(res.code)}`);toast('活動已建立！請複製新人加入連結。')})});
-$('joinForm').addEventListener('submit',e=>{e.preventDefault();action('room:join',{code:$('joinCode').value,name:$('joinName').value,mode:$('joinMode').value,inviteCode:$('joinInvite').value.trim().toUpperCase(),token:session?.code===$('joinCode').value.toUpperCase()?session.token:null},res=>{session={code:res.code,token:res.token};localStorage.setItem(storageKey,JSON.stringify(session));history.replaceState(null,'',`/?room=${encodeURIComponent(res.code)}`);toast('成功加入活動')})});
-$('addMemberForm').addEventListener('submit',e=>{e.preventDefault();const name=$('addMemberName').value.trim(),group=Number($('addMemberGroup').value);action('member:add',{name,group},res=>{$('addMemberName').value='';toast(`已預留名額，專屬加入碼：${res.inviteCode}`)})});
-function manageMembers(){const root=$('memberManager');root.replaceChildren();if(!state?.isHost)return;state.groups.forEach(g=>{const section=document.createElement('section');section.className='manager-group';const heading=document.createElement('strong');heading.textContent=`第 ${g.id} 組｜${g.mode==='onsite'?'現場':'線上'}（${g.members.length}/${g.capacity}）`;section.appendChild(heading);if(!g.members.length){const empty=document.createElement('p');empty.className='small';empty.textContent='尚無成員';section.appendChild(empty)}g.members.forEach(m=>{const row=document.createElement('div');row.className='manager-row';const person=document.createElement('div');person.className='manager-person';const title=document.createElement('b');title.textContent=m.name;const status=document.createElement('small');status.textContent=m.active?'已加入':'待加入';person.append(title,status);if(m.inviteCode){const invite=document.createElement('div');invite.className='invite-line';const code=document.createElement('code');code.textContent=m.inviteCode;const copy=document.createElement('button');copy.type='button';copy.className='btn mini';copy.textContent='複製加入碼';copy.onclick=()=>navigator.clipboard.writeText(m.inviteCode).then(()=>toast('已複製個人加入碼')).catch(()=>window.prompt('請複製個人加入碼',m.inviteCode));invite.append(code,copy);person.appendChild(invite)}const actions=document.createElement('div');actions.className='manager-actions';const select=document.createElement('select');select.setAttribute('aria-label',`調整 ${m.name} 的小組`);state.groups.filter(target=>target.mode===g.mode).forEach(target=>{const option=document.createElement('option');option.value=target.id;option.textContent=`第 ${target.id} 組`;option.selected=target.id===g.id;option.disabled=target.id!==g.id&&target.members.length>=target.capacity;select.appendChild(option)});select.onchange=()=>action('member:move',{memberId:m.id,group:Number(select.value)},()=>toast('小組已調整'));const remove=document.createElement('button');remove.type='button';remove.className='btn mini danger';remove.textContent='移除';remove.onclick=()=>{if(confirm(`確定移除「${m.name}」？其原登入資格會立即失效。`))action('member:remove',{memberId:m.id},()=>toast('已移除成員'))};actions.append(select,remove);row.append(person,actions);section.appendChild(row)});root.appendChild(section)})}
+$('createForm').addEventListener('submit',e=>{e.preventDefault();const groups=readGroupConfig();if(!groups)return;action('room:create',{name:$('hostName').value,groups},res=>{session={code:res.code,token:res.token};localStorage.setItem(storageKey,JSON.stringify(session));history.replaceState(null,'',`/?room=${encodeURIComponent(res.code)}`);toast('活動已建立！請複製新人加入連結。')})});
+$('joinForm').addEventListener('submit',e=>{e.preventDefault();action('room:join',{code:$('joinCode').value,name:$('joinName').value,mode:$('joinMode').value,role:$('joinRole').value,inviteCode:$('joinInvite').value.trim().toUpperCase(),token:session?.code===$('joinCode').value.toUpperCase()?session.token:null},res=>{session={code:res.code,token:res.token};localStorage.setItem(storageKey,JSON.stringify(session));history.replaceState(null,'',`/?room=${encodeURIComponent(res.code)}`);toast('成功加入活動')})});
+$('addMemberForm').addEventListener('submit',e=>{e.preventDefault();const name=$('addMemberName').value.trim(),group=Number($('addMemberGroup').value),role=$('addMemberRole').value;action('member:add',{name,group,role},res=>{$('addMemberName').value='';toast(`已預留名額，專屬加入碼：${res.inviteCode}`)})});
+function manageMembers(){
+ const root=$('memberManager');root.replaceChildren();if(!state?.isHost)return;
+ state.groups.forEach(g=>{
+  const section=document.createElement('section');section.className='manager-group';
+  const heading=document.createElement('strong');heading.textContent=`第 ${g.id} 組｜${modeLabels[g.mode]}（${g.members.length}/${g.capacity}） · 新人 ${g.members.filter(m=>m.role==='newcomer').length}/${g.quotas.newcomer} · 管理職 ${g.members.filter(m=>m.role==='manager').length}/${g.quotas.manager}`;
+  section.appendChild(heading);
+  if(!g.members.length){const empty=document.createElement('p');empty.className='small';empty.textContent='尚無成員';section.appendChild(empty)}
+  g.members.forEach(m=>{
+   const row=document.createElement('div');row.className='manager-row';
+   const person=document.createElement('div');person.className='manager-person';
+   const title=document.createElement('b');title.textContent=m.name;
+   const status=document.createElement('small');status.textContent=`${roleLabels[m.role]} · ${m.active?'已加入':'待加入'}`;person.append(title,status);
+   if(m.inviteCode){const invite=document.createElement('div');invite.className='invite-line';const code=document.createElement('code');code.textContent=m.inviteCode;const copy=document.createElement('button');copy.type='button';copy.className='btn mini';copy.textContent='複製加入碼';copy.onclick=()=>navigator.clipboard.writeText(m.inviteCode).then(()=>toast('已複製個人加入碼')).catch(()=>window.prompt('請複製個人加入碼',m.inviteCode));invite.append(code,copy);person.appendChild(invite)}
+   const actions=document.createElement('div');actions.className='manager-actions';const select=document.createElement('select');select.setAttribute('aria-label',`調整 ${m.name} 的小組`);
+   state.groups.filter(target=>target.mode===g.mode).forEach(target=>{const option=document.createElement('option');option.value=target.id;option.textContent=`第 ${target.id} 組`;option.selected=target.id===g.id;option.disabled=target.id!==g.id&&target.members.filter(x=>x.role===m.role).length>=target.quotas[m.role];select.appendChild(option)});
+   select.onchange=()=>action('member:move',{memberId:m.id,group:Number(select.value)},()=>toast('小組已調整'));
+   const remove=document.createElement('button');remove.type='button';remove.className='btn mini danger';remove.textContent='移除';remove.onclick=()=>{if(confirm(`確定移除「${m.name}」？其原登入資格會立即失效。`))action('member:remove',{memberId:m.id},()=>toast('已移除成員'))};
+   actions.append(select,remove);row.append(person,actions);section.appendChild(row);
+  });root.appendChild(section);
+ });
+}
+function refreshMemberGroupOptions(){
+ if(!state?.isHost)return;
+ const select=$('addMemberGroup'),previous=select.value;
+ select.replaceChildren();state.groups.forEach(g=>{const op=document.createElement('option');op.value=g.id;op.textContent=`第 ${g.id} 組｜${modeLabels[g.mode]}（${g.members.length}/${g.capacity}）`;select.append(op)});
+ if(state.groups.some(g=>String(g.id)===previous))select.value=previous;
+}
+const example3=()=>Array.from({length:3},()=>({mode:'onsite',capacity:3,newcomer:2,manager:1}));
+const example5=()=>[{mode:'online',capacity:4,newcomer:4,manager:0},{mode:'online',capacity:4,newcomer:4,manager:0},{mode:'online',capacity:3,newcomer:3,manager:0},{mode:'online',capacity:3,newcomer:3,manager:0},{mode:'onsite',capacity:4,newcomer:4,manager:0}];
+let formGroups=example3();
+function renderGroupConfig(){
+ $('groupCount').value=formGroups.length;
+ const container=$('groupConfig');container.replaceChildren();
+ formGroups.forEach((g,index)=>{
+  const field=document.createElement('fieldset');field.className='group-config-row';
+  const legend=document.createElement('legend');legend.textContent=`第 ${index+1} 組`;field.append(legend);
+  const cols=[{key:'mode',label:'參與方式',options:[['online','線上'],['onsite','現場']]},{key:'capacity',label:'人數上限',min:1,max:12},{key:'newcomer',label:'新人名額',min:0,max:12},{key:'manager',label:'管理職名額',min:0,max:12}];
+  cols.forEach(c=>{const lab=document.createElement('label');lab.textContent=c.label;let input;
+   if(c.options){input=document.createElement('select');c.options.forEach(([val,title])=>{const opt=document.createElement('option');opt.value=val;opt.textContent=title;input.append(opt)});input.value=g[c.key]}
+   else{input=document.createElement('input');input.type='number';input.min=c.min;input.max=c.max;input.step=1;input.value=g[c.key]}
+   input.setAttribute('aria-label',`第 ${index+1} 組${c.label}`);
+   input.oninput=()=>{g[c.key]=c.key==='mode'?input.value:Number(input.value);updateConfigTotal()};lab.append(input);field.append(lab);
+  });container.append(field);
+ });updateConfigTotal();
+}
+function updateConfigTotal(){
+ const people=formGroups.reduce((n,g)=>n+(Number.isFinite(g.capacity)?g.capacity:0),0);
+ const valid=formGroups.every(g=>Number.isInteger(g.capacity)&&g.capacity>=1&&g.capacity<=12&&Number.isInteger(g.newcomer)&&g.newcomer>=0&&Number.isInteger(g.manager)&&g.manager>=0&&g.newcomer+g.manager===g.capacity)&&people<=100;
+ $('configTotal').textContent=`共 ${formGroups.length} 組，總名額 ${people} 人（新人 ${formGroups.reduce((n,g)=>n+g.newcomer,0)}、管理職 ${formGroups.reduce((n,g)=>n+g.manager,0)}）。${valid?'設定有效。':'請確認各組「新人＋管理職＝人數上限」，每組最多 12 人，總數最多 100 人。'}`;
+ $('configTotal').classList.toggle('invalid',!valid);
+}
+function readGroupConfig(){
+ const groups=formGroups.map(g=>({...g}));
+ if(!groups.every(g=>['online','onsite'].includes(g.mode)&&Number.isInteger(g.capacity)&&g.capacity>=1&&g.capacity<=12&&Number.isInteger(g.newcomer)&&g.newcomer>=0&&Number.isInteger(g.manager)&&g.manager>=0&&g.newcomer+g.manager===g.capacity)||groups.reduce((n,g)=>n+g.capacity,0)>100){toast('請修正小組人數和身分名額設定。');return null}
+ return groups;
+}
+$('groupCount').onchange=()=>{
+ const number=Number($('groupCount').value);
+ if(!Number.isInteger(number)||number<1||number>12){toast('小組數量須介於 1 至 12 組');$('groupCount').value=formGroups.length;return}
+ formGroups=Array.from({length:number},(_,i)=>formGroups[i]||{mode:'onsite',capacity:3,newcomer:3,manager:0});renderGroupConfig();
+};
+$('preset3').onclick=()=>{formGroups=example3();renderGroupConfig()};
+$('preset5').onclick=()=>{formGroups=example5();renderGroupConfig()};
+renderGroupConfig();
 $('draw').onclick=()=>action('card:draw',{group:viewedGroup});
 $('timerStart').onclick=()=>action('timer:start');
 $('timerReset').onclick=()=>action('timer:reset');
@@ -31,18 +96,18 @@ $('leave').onclick=()=>{if(!confirm('確定離開此裝置的活動畫面？你�
 $('export').onclick=()=>action('room:export',{},res=>{const blob=new Blob([JSON.stringify(res.data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`icebreaker-${state.code}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000)});
 $('clear').onclick=()=>{const input=prompt(`這將清空全部小組的抽卡紀錄（不會移除成員）。請輸入活動代碼 ${state.code} 確認：`);if(input===null)return;action('room:clear',{confirm:input.toUpperCase()},()=>toast('已重置抽卡進度'))};
 function render(){if(!state){$('gate').classList.remove('hidden');$('app').classList.add('hidden');return} $('gate').classList.add('hidden');$('app').classList.remove('hidden');
- $('roomTitle').textContent=`活動代碼 ${state.code}`;$('myRole').textContent=state.isHost?'講師控制台｜可切換階段、控制所有小組與倒數計時':`新人參與者｜第 ${state.myGroup} 組（${state.myGroup===5?'現場':'線上'}）`;
- $('hostTools').classList.toggle('hidden',!state.isHost);$('groupHelp').textContent=state.isHost?'可檢視並操作五個小組的卡牌；抽卡會同步到組員裝置。':'你只能抽取自己小組的卡牌；講師統一切換活動階段。';
+ $('roomTitle').textContent=`活動代碼 ${state.code}`;$('myRole').textContent=state.isHost?'講師控制台｜可切換階段、控制所有小組與倒數計時':`參與者｜第 ${state.myGroup} 組（${modeLabels[state.groups.find(g=>g.id===state.myGroup)?.mode]||''}）`;
+ $('hostTools').classList.toggle('hidden',!state.isHost);$('groupHelp').textContent=state.isHost?`可檢視並操作 ${state.groups.length} 個小組的卡牌；抽卡會同步到組員裝置。`:'你只能抽取自己小組的卡牌；講師統一切換活動階段。';
  const stage=state.stage;$('stageBadge').textContent=`第 ${stage+1} 階段`;document.documentElement.style.setProperty('--accent',colors[stage]);
  $('stageTabs').replaceChildren();state.stageNames.forEach((name,i)=>{const b=document.createElement('button');b.className='tab'+(stage===i?' active':'');b.textContent=`0${i+1} ${name}`;b.disabled=!state.isHost;b.title=state.isHost?'點擊切換所有人的階段':'只有講師可以切換階段';b.onclick=()=>action('stage:set',{stage:i});$('stageTabs').appendChild(b)});
- $('groupButtons').replaceChildren();state.groups.forEach(g=>{const b=document.createElement('button');b.className='group-btn'+(viewedGroup===g.id?' current':'');b.textContent=`${g.id} 組 ${g.mode==='onsite'?'現場':'線上'} ${g.members.length}/${g.capacity}`;b.disabled=!state.isHost;b.onclick=()=>{viewedGroup=g.id;render()};$('groupButtons').appendChild(b)});
- const g=state.groups[viewedGroup-1];const h=g.history[stage];const last=g.current;$('cardEn').textContent=en[stage];$('cardNo').textContent=last===null?'CARD —':`CARD ${String(last+1).padStart(2,'0')}`;
+ $('groupButtons').style.gridTemplateColumns=`repeat(${Math.min(state.groups.length,5)},minmax(0,1fr))`;$('groupButtons').replaceChildren();state.groups.forEach(g=>{const b=document.createElement('button');b.className='group-btn'+(viewedGroup===g.id?' current':'');b.textContent=`${g.id} 組 ${g.mode==='onsite'?'現場':'線上'} ${g.members.length}/${g.capacity}`;b.disabled=!state.isHost;b.onclick=()=>{viewedGroup=g.id;render()};$('groupButtons').appendChild(b)});
+ if(!state.groups.some(g=>g.id===viewedGroup))viewedGroup=state.groups[0].id;const g=state.groups.find(g=>g.id===viewedGroup);const h=g.history[stage];const last=g.current;$('cardEn').textContent=en[stage];$('cardNo').textContent=last===null?'CARD —':`CARD ${String(last+1).padStart(2,'0')}`;
  $('question').textContent=last===null?'按下「抽一張卡」開始交流':deckData?.decks?.[stage]?.[last]||'題庫載入中……';$('cardHint').textContent=hints[stage];
  $('draw').disabled=h.length>=10||!deckData;$('draw').textContent=h.length>=10?'本階段卡牌已抽完':'✦ 抽一張卡';$('drawInfo').textContent=h.length?'本組卡牌由所有組員共用':'請由一名組員負責抽卡';
  $('progressLabel').textContent=`本階段已抽 ${h.length} / 10 張`;$('groupLabel').textContent=`第 ${viewedGroup} 組`;$('progressBar').style.width=`${h.length*10}%`;
  $('guide').replaceChildren();const strong=document.createElement('strong');strong.textContent=guides[stage][0];const p=document.createElement('p');p.textContent=guides[stage][1];$('guide').append(strong,p);
  $('timePresets').replaceChildren();[60,75,120,150,180].forEach(sec=>{const b=document.createElement('button');b.textContent=sec<120?`${sec} 秒`:sec===120?'2 分鐘':sec===150?'2 分 30 秒':'3 分鐘';b.className=state.timer.seconds===sec?'active':'';b.disabled=!state.isHost;b.onclick=()=>action('timer:set',{seconds:sec});$('timePresets').appendChild(b)});
  $('timerStart').disabled=!state.isHost;$('timerReset').disabled=!state.isHost;$('timerNote').textContent=state.isHost?'講師統一操作，所有參與者同步看到倒數。':'倒數由講師統一控制，自動同步至本裝置。';
- $('people').replaceChildren();state.groups.forEach(g=>{const d=document.createElement('div');d.className='people-group';const title=document.createElement('strong');title.textContent=`第 ${g.id} 組（${g.mode==='onsite'?'現場':'線上'}） · ${g.members.length}/${g.capacity} 人`;const members=document.createElement('span');members.textContent=g.members.length?g.members.map(x=>x.name).join('、'):'尚無成員';d.append(title,members);$('people').appendChild(d)});manageMembers();updateTimer()}
+ refreshMemberGroupOptions();$('people').replaceChildren();state.groups.forEach(g=>{const d=document.createElement('div');d.className='people-group';const title=document.createElement('strong');title.textContent=`第 ${g.id} 組（${modeLabels[g.mode]}） · ${g.members.length}/${g.capacity} 人（新人 ${g.quotas.newcomer}／管理職 ${g.quotas.manager} 名額）`;const members=document.createElement('span');members.textContent=g.members.length?g.members.map(x=>`${x.name}（${roleLabels[x.role]}）`).join('、'):'尚無成員';d.append(title,members);$('people').appendChild(d)});manageMembers();updateTimer()}
 function updateTimer(){if(!state)return;const t=state.timer;const remain=t.endsAt===null?t.seconds:Math.max(0,Math.ceil((t.endsAt-Date.now())/1000));$('timer').textContent=`${String(Math.floor(remain/60)).padStart(2,'0')}:${String(remain%60).padStart(2,'0')}`;$('timer').classList.toggle('warning',remain<=10&&t.endsAt!==null);$('timerStart').textContent=t.endsAt!==null&&remain>0?'重新開始':'開始倒數'}
 setInterval(updateTimer,250);
