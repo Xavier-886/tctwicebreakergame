@@ -1,1 +1,17 @@
-{"name":"new-hire-icebreaker-live","version":"1.0.0","private":true,"description":"20-person five-group realtime icebreaker cards","scripts":{"start":"node server.js","check":"node --check server.js && node --check public/app.js"},"engines":{"node":">=20"},"dependencies":{"express":"^4.21.2","socket.io":"^4.8.1"}}
+{
+  "name": "new-hire-icebreaker-live",
+  "version": "1.3.0",
+  "private": true,
+  "description": "Configurable real-time new-hire icebreaker: group limits, roles, attendance modes",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/app.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
